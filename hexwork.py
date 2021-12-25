@@ -9,7 +9,9 @@ from PyQt5.QtCore import Qt
 # Returns palette settings
 def get_palette():
     dark = QPalette()
-    dark.setColor(QPalette.Window, QColor(53, 53, 53))
+    # Works only with Adwaita Dark theme
+    # tested on Gnome 40.1
+    '''dark.setColor(QPalette.Window, QColor(53, 53, 53))
     dark.setColor(QPalette.WindowText, Qt.white)
     dark.setColor(QPalette.Base, QColor(25, 25, 25))
     dark.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
@@ -22,14 +24,13 @@ def get_palette():
     dark.setColor(QPalette.Link, QColor(42, 130, 218))
     dark.setColor(QPalette.Highlight, QColor(42, 130, 218))
     dark.setColor(QPalette.HighlightedText, Qt.black)
-    dark.setColor(QPalette.Background, QColor(53, 53, 53))
+    dark.setColor(QPalette.Background, QColor(53, 53, 53))'''
     return dark
 
 
 class UserMessage(QDialog):
     def __init__(self, parent, window_title):
         super().__init__(parent)
-        self.window_title = window_title
         self.setWindowTitle(window_title)
         self.label = QLabel(self)
         self.label.move(10, 5)
@@ -39,7 +40,7 @@ class UserMessage(QDialog):
         text = str(text)
         self.label.setText(text)
         self.setFixedSize(self.label.width() * 3 + 20, 30)
-        print(self.window_title, ': ', text, sep='')
+        print(self.windowTitle().title(), ': ', text, sep='')
         self.open()
 
 
@@ -82,7 +83,20 @@ class InputDialogue(QInputDialog):
             print('InputDialogue(complete):', complete)
             return response
         else:
-            return 'InputDialogue(incomplete): ' + str(response if response else complete)
+            print('InputDialogue(incomplete): ' + str(response if response else complete))
+            return
+
+
+class RealTimeTextEdit(QTextEdit):
+    def __init__(self, app):
+        super(RealTimeTextEdit, self).__init__()
+        self.app = app
+
+    def keyPressEvent(self, e) -> None:
+        super(RealTimeTextEdit, self).keyPressEvent(e)
+        '''if not self.app.exit_flag:
+            self.app.data += bytes(chr(e.key()))
+            self.app.print_data_app()'''
 
 
 class App(QMainWindow):
@@ -95,15 +109,15 @@ class App(QMainWindow):
 
         self.encode = 'ASCII'
 
-        self.main_text = QTextEdit()
+        self.main_text = RealTimeTextEdit(self)
+        self.decoded_text = RealTimeTextEdit(self)
         self.offset_text = QTextEdit()
-        self.decoded_text = QTextEdit()
 
         self.setPalette(get_palette())
 
         self.init_ui()
 
-        self.col_per_row = self.main_text.width() // self.main_text.fontMetrics().boundingRect(('0' * self.dig_per_col) + '   ').width() + 1
+        self.col_per_row = 1
 
         self.data = b''
         if len(sys.argv) > 1:
@@ -149,7 +163,7 @@ class App(QMainWindow):
     def close(self):
         if not self.exit_flag:
             self.exit_flag = True
-            exit(0)
+            self.close()
 
     def settings_menu(self):
         pass
@@ -230,15 +244,29 @@ class App(QMainWindow):
         dialogue = InputDialogue('Calculate')
         user_message = UserMessage(self, 'Answer')
         try:
-            ans = eval(dialogue.act('Expression:'))
-        except NameError as err:
+            dial = dialogue.act('Expression:')
+            if dial is not None:
+                ans = eval(dial)
+            else:
+                return
+        except Exception as err:
             ans = err
             user_message.setWindowTitle('Error')
         user_message.act(ans)
 
+    def change_read_write_mode(self):
+        self.main_text.setReadOnly(False if self.main_text.isReadOnly() else True)
+        self.decoded_text.setReadOnly(False if self.decoded_text.isReadOnly() else True)
+
     # Prints file data in the app
     def print_data_app(self):
-        data_str_tmp = str(self.data)[2:]
+        if not self.exit_flag:
+            data_str_tmp = str(self.data)[2:]
+        else:
+            data_str_tmp = ''.join(self.main_text.toPlainText().split())
+
+        self.col_per_row = self.main_text.width() // self.main_text.fontMetrics().boundingRect(('0' * self.dig_per_col)
+                                                                                               + '   ').width()
 
         main_text = ''
         decoded_text = ''
@@ -247,6 +275,9 @@ class App(QMainWindow):
         offset = 0
 
         for data_cur_str in [data_str_tmp[i:i + self.dig_per_col * self.col_per_row] for i in range(0, len(data_str_tmp), self.dig_per_col * self.col_per_row)]:
+            offset_text += ((len(str(hex((self.dig_per_col * self.col_per_row // 2) *
+                                         (len(data_str_tmp) // (self.dig_per_col * self.col_per_row // 2)))))) -
+                            len(str(hex(offset))[2:]) - 2) * '0' + str(hex(offset))[2:] + '\n'
             for data_cur_col in [data_cur_str[i:i + self.dig_per_col] for i in range(0, len(data_cur_str), self.dig_per_col)]:
 
                 # Hexadecimal data (middle column)
@@ -262,9 +293,6 @@ class App(QMainWindow):
 
             # Offset from the beginning of a file (left column)
             offset += self.dig_per_col * self.col_per_row // 2
-            offset_text += ((len(str(hex((self.dig_per_col * self.col_per_row // 2) *
-                                         (len(data_str_tmp) // (self.dig_per_col * self.col_per_row // 2)))))) -
-                            len(str(hex(offset))[2:]) - 2) * '0' + str(hex(offset))[2:] + '\n'
 
         del data_str_tmp
 
@@ -275,8 +303,6 @@ class App(QMainWindow):
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
         if not self.exit_flag:
-            self.col_per_row = self.main_text.width() // \
-                               self.main_text.fontMetrics().boundingRect(('0' * self.dig_per_col) + '   ').width()
             self.print_data_app()
 
     # Settings up app view
@@ -314,7 +340,7 @@ class App(QMainWindow):
 
     # Initialized user interface
     def init_ui(self):
-        self.setWindowTitle('hex_aarch')
+        self.setWindowTitle('hexwork')
         self.setGeometry(0, 0, 1080, 720)
 
         rect = self.frameGeometry()
@@ -352,12 +378,17 @@ class App(QMainWindow):
         settings_action.setStatusTip('Open settings menu')
         settings_action.triggered.connect(self.close)
 
-        jmp_action = QAction(QIcon(), 'Calculate', self)
-        jmp_action.setShortcut('Ctrl+K')
-        jmp_action.setStatusTip('Calculate with eval()')
-        jmp_action.triggered.connect(self.calc)
+        eval_action = QAction(QIcon(), 'Calculate', self)
+        eval_action.setShortcut('Ctrl+K')
+        eval_action.setStatusTip('Calculate with eval()')
+        eval_action.triggered.connect(self.calc)
 
-        edit_menu.addActions((settings_action, jmp_action))
+        insert_action = QAction(QIcon(), 'Insert', self)
+        insert_action.setShortcut('Insert')
+        insert_action.setStatusTip('Set write/read only mode')
+        insert_action.triggered.connect(self.change_read_write_mode)
+
+        edit_menu.addActions((settings_action, eval_action, insert_action))
 
         widget_mid = QWidget()
         widget_mid.setLayout(self.create_main_view())
